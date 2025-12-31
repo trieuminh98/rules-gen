@@ -1,0 +1,28 @@
+{
+  "name": "@internal/rules-gen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "rules-gen": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "dev": "pnpm build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "commander": "^14.0.2",
+    "fast-glob": "^3.3.3",
+    "js-yaml": "^4.1.1",
+    "simple-git": "^3.30.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.0.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}
