@@ -3,11 +3,13 @@ import path from "node:path";
 import fs from "node:fs";
 import { Command } from "commander";
 import fg from "fast-glob";
+import yaml from "js-yaml";
 
 import { cloneMain, cleanupDir } from "./git.js";
 import { loadSpec } from "./spec.js";
 import { extractTargets } from "./extractTargets.js";
 import { ensureDir, writeFile, isDirPath } from "./write.js";
+import { ensureGitignorePatterns } from "./gitignore.js";
 
 function splitOut(v: string) {
   return v
@@ -18,6 +20,43 @@ function splitOut(v: string) {
 
 function readUtf8(p: string) {
   return fs.readFileSync(p, "utf8");
+}
+
+function addHeaderAfterFrontmatter(
+  body: string,
+  header: string
+): string {
+  if (body.startsWith("---\n")) {
+    const end = body.indexOf("\n---", 3);
+    if (end !== -1) {
+      const fmEnd = end + "\n---".length;
+      return body.slice(0, fmEnd + 1) + header + body.slice(fmEnd + 1);
+    }
+  }
+  return header + body;
+}
+
+function splitFrontmatter(text: string): {
+  frontmatter: Record<string, any>;
+  frontmatterRaw: string | null;
+  body: string;
+} {
+  if (text.startsWith("---\n")) {
+    const end = text.indexOf("\n---", 3);
+    if (end !== -1) {
+      const fmEnd = end + 4; // include closing ---\n
+      const fmRaw = text.slice(0, fmEnd);
+      const fmContent = fmRaw.replace(/^---\n/, "").replace(/\n---$/, "");
+      const fmData = yaml.load(fmContent) as any;
+      const body = text.slice(fmEnd).replace(/^\n/, "");
+      return {
+        frontmatter: fmData && typeof fmData === "object" ? fmData : {},
+        frontmatterRaw: fmRaw + "\n",
+        body,
+      };
+    }
+  }
+  return { frontmatter: {}, frontmatterRaw: null, body: text };
 }
 
 const program = new Command();
@@ -54,6 +93,8 @@ const outTargets = splitOut(opts.out);
     ? path.join(codexOutRaw, "AGENTS.md")
     : codexOutRaw;
 
+  ensureGitignorePatterns(cursorOut, codexOut);
+
   let hubDir: string | null = null;
   try {
     hubDir = await cloneMain(opts.repo);
@@ -83,26 +124,66 @@ const outTargets = splitOut(opts.out);
       for (const rel of sourceFiles) {
         const abs = path.join(hubDir, rel);
         const raw = readUtf8(abs) + overlayJoined;
-        const cursorText = extractTargets(raw, new Set(["all", "cursor"]));
+        const { frontmatterRaw, body } = splitFrontmatter(raw);
+        const cursorText = extractTargets(body, new Set(["all", "cursor"]));
+        const cursorWithFm = (frontmatterRaw ?? "") + cursorText;
 
-        const outRel = rel
-          .replace(/\.rules\.md$/i, ".mdc")
+        const relNoPrefix = rel.replace(/^rules[\\/]/, "");
+        const outRel = relNoPrefix
+          .replace(/\.rules?\.md$/i, ".mdc")
           .replace(/\.md$/i, ".mdc");
 
         const outPath = path.join(process.cwd(), cursorOut, outRel);
         const header = `<!-- GENERATED: do not edit. repo=${opts.repo} branch=main -->\n`;
-        writeFile(outPath, header + cursorText);
+        writeFile(outPath, addHeaderAfterFrontmatter(cursorWithFm, header));
       }
     }
 
     // Codex: bundle 1 file
     if (outTargets.includes("codex")) {
       let bundle = `<!-- GENERATED: do not edit. repo=${opts.repo} branch=main -->\n# AGENTS\n`;
+
       for (const rel of sourceFiles) {
         const abs = path.join(hubDir, rel);
         const raw = readUtf8(abs) + overlayJoined;
-        const codexText = extractTargets(raw, new Set(["all", "codex"]));
-        bundle += `\n---\n\n## ${rel}\n\n${codexText}`;
+        const { frontmatter, frontmatterRaw, body } = splitFrontmatter(raw);
+        const codexText = extractTargets(body, new Set(["all", "codex"]));
+        const relNoPrefix = rel.replace(/^rules[\\/]/, "");
+
+        // build AGENTS: alwaysApply true => inline content; otherwise point to cursor rule
+        const alwaysApply = frontmatter?.alwaysApply;
+        const description =
+          typeof frontmatter?.description === "string"
+            ? frontmatter.description
+            : "";
+        const globs =
+          Array.isArray(frontmatter?.globs) && frontmatter.globs.length
+            ? frontmatter.globs.join(", ")
+            : "";
+        const cursorRel = relNoPrefix
+          .replace(/\.rules?\.md$/i, ".mdc")
+          .replace(/\.md$/i, ".mdc");
+        const cursorPath = path.join(cursorOut, cursorRel).replace(/\\/g, "/");
+
+        const sectionHeader = `\n---\n\n## ${rel}\n\n`;
+        const metaLines: string[] = [];
+        if (description) metaLines.push(`> ${description}`);
+        if (globs) metaLines.push(`> globs: ${globs}`);
+        const alwaysApplyFlag =
+          typeof alwaysApply === "string"
+            ? alwaysApply.toLowerCase() === "true"
+            : !!alwaysApply;
+        metaLines.push(`> alwaysApply: ${alwaysApplyFlag}`);
+
+        if (alwaysApplyFlag) {
+          bundle += sectionHeader;
+          if (metaLines.length) bundle += metaLines.join("\n") + "\n\n";
+          bundle += codexText;
+        } else {
+          bundle += sectionHeader;
+          if (metaLines.length) bundle += metaLines.join("\n") + "\n\n";
+          bundle += `- See cursor rule: ${cursorPath}\n`;
+        }
       }
 
       const outPath = path.join(process.cwd(), codexOut);
