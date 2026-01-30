@@ -4,7 +4,8 @@ dist/
 *.log
 *.tsbuildinfo
 
-.cursor/rules/
-AGENTS.md
+.cursor/
+.codex/
+.agent/
 
-.codex
+AGENTS.md

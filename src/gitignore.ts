@@ -10,16 +10,20 @@ function dirPattern(p: string) {
   return p.endsWith("/") ? p : `${p}/`;
 }
 
-export function ensureGitignorePatterns(cursorOut: string, codexOut: string) {
-  const patterns = [
-    cursorOut ? dirPattern(toProjectRelative(cursorOut)) : null,
-    codexOut ? toProjectRelative(codexOut) : null,
-  ].filter(Boolean) as string[];
+function isDirPath(p: string) {
+  const norm = p.replace(/\\/g, "/");
+  if (norm.endsWith("/")) return true;
+  return path.extname(norm) === "";
+}
+
+export function ensureGitignorePatterns(targets: string[]) {
+  const patterns = targets.filter(Boolean).map((p) => {
+    const rel = toProjectRelative(p);
+    return isDirPath(rel) ? dirPattern(rel) : rel;
+  });
 
   const abs = path.resolve(".gitignore");
-  const existing = fs.existsSync(abs)
-    ? fs.readFileSync(abs, "utf8").split(/\r?\n/)
-    : [];
+  const existing = fs.existsSync(abs) ? fs.readFileSync(abs, "utf8").split(/\r?\n/) : [];
   const existingSet = new Set(existing);
   const missing = patterns.filter((p) => !existingSet.has(p));
 
